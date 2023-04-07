@@ -35,7 +35,7 @@ long long setupThreads(struct ComputeInfo* computeInfo, int threadCount,
     if (pthread_barrier_init(&computeInfo->syncBarrier, NULL, 2)) return -1;
 
     for (int i = 0; i < threadCount; i++) {
-        if (i <= remainder) {
+        if (i < remainder) {
             computeInfo->start = i * (portion + 1);
             computeInfo->end = computeInfo->start + portion + 1;
         }
@@ -52,9 +52,10 @@ long long setupThreads(struct ComputeInfo* computeInfo, int threadCount,
         }
         pthread_barrier_wait(&computeInfo->syncBarrier);
     }
+    pthread_barrier_destroy(&computeInfo->syncBarrier);
     long long result = LONG_LONG_MAX;
+    long long returnVal;
     for (int i = 0; i < threadCount; i++) {
-        long long returnVal;
         pthread_join(threads[i], (void**) &returnVal);
         if (returnVal != -1 && returnVal < result) { // Store first occurrence
             result = returnVal;
@@ -87,7 +88,6 @@ int main() {
     int item = 12;
     int* array = (int*) malloc(size * sizeof(int));
     array[456318842] = item;
-    array[2] = item;
     long long index = parallel_linear_search(array, item, 8, size);
     if (index >= 0) {
         printf("First occurrence of item [%d] is at index: %lli\n", item, index);
