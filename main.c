@@ -5,23 +5,30 @@
 struct ComputeInfo {
     const int* array;
     int itemToSearch;
+    long long foundIndex;
     long long start;
     long long end;
     pthread_barrier_t syncBarrier;
+    pthread_mutex_t foundIndexMutex;
 };
 
-long long linear_search(struct ComputeInfo computeInfo) {
+void linear_search(struct ComputeInfo computeInfo) {
     long long start = computeInfo.start;
     long long end = computeInfo.end;
     pthread_barrier_wait(&computeInfo.syncBarrier);
     int itemToSearch = computeInfo.itemToSearch;
     const int* array = computeInfo.array;
     for (long long i = start; i < end; i++) {
+        if (computeInfo.foundIndex < i) {
+            return;
+        }
         if (itemToSearch == array[i]) {
-            return i;
+            pthread_mutex_lock(&computeInfo.foundIndexMutex);
+            if (computeInfo.foundIndex > i) computeInfo.foundIndex = i;
+            pthread_mutex_unlock(&computeInfo.foundIndexMutex);
+            return;
         }
     }
-    return -1;
 }
 
 long long setupThreads(struct ComputeInfo* computeInfo, int threadCount,
@@ -32,8 +39,16 @@ long long setupThreads(struct ComputeInfo* computeInfo, int threadCount,
 
     long long portion = (long long) arraySize / threadCount;
     long long remainder = (long long) arraySize % threadCount;
-    if (pthread_barrier_init(&computeInfo->syncBarrier, NULL, 2)) return -1;
-
+    if (pthread_barrier_init(&computeInfo->syncBarrier, NULL, 2)) {
+        free(threads);
+        return -1;
+    }
+    if (pthread_mutex_init(&computeInfo->foundIndexMutex, NULL)) {
+        pthread_barrier_destroy(computeInfo->syncBarrier);
+        free(threads);
+        return -1;
+    }
+    computeInfo->foundIndex = LONG_LONG_MAX;
     for (int i = 0; i < threadCount; i++) {
         if (i < remainder) {
             computeInfo->start = i * (portion + 1);
@@ -48,21 +63,18 @@ long long setupThreads(struct ComputeInfo* computeInfo, int threadCount,
             for (int j = 0; j < i; j++) {
                 pthread_join(threads[j], NULL);
             }
+            pthread_barrier_destroy(&computeInfo->syncBarrier);
+            pthread_mutex_destroy(&computeInfo->foundIndexMutex);
+            free(threads);
             return -1;
         }
         pthread_barrier_wait(&computeInfo->syncBarrier);
     }
     pthread_barrier_destroy(&computeInfo->syncBarrier);
-    long long result = LONG_LONG_MAX;
-    long long returnVal;
-    for (int i = 0; i < threadCount; i++) {
-        pthread_join(threads[i], (void**) &returnVal);
-        if (returnVal != -1 && returnVal < result) { // Store first occurrence
-            result = returnVal;
-        }
-    }
+    for (int i = 0; i < threadCount; i++) pthread_join(threads[i], NULL);
+    pthread_mutex_destroy(&computeInfo->foundIndexMutex);
     free(threads);
-    return result;
+    return computeInfo->foundIndex;
 }
 
 long long parallel_linear_search(const int* intArray, int item,
@@ -84,13 +96,27 @@ long long parallel_linear_search(const int* intArray, int item,
 }
 
 int main() {
-    size_t size = 1000000000;
-    int item = 12;
-    int* array = (int*) malloc(size * sizeof(int));
-    array[456318842] = item;
-    long long index = parallel_linear_search(array, item, 8, size);
-    if (index >= 0) {
-        printf("First occurrence of item [%d] is at index: %lli\n", item, index);
+    for (int k = 1; k < 9; k++) {
+        if (k == 3) k = 4;
+        if (k == 5) k = 6;
+        if (k == 7) k = 8;
+        size_t size = 1000000000;
+        int item = 12845612;
+        int *array = (int *) calloc(size, sizeof(int));
+        if (!array) return -1;
+        array[size-1] = item;
+        array[size-2] = item;
+        clock_t start, end;
+        start = clock();
+        long long index = parallel_linear_search(array, item, k, size);
+        end = clock();
+        if (index >= 0) {
+            printf("First occurrence of item [%d] is at index: %lli\n", item, index);
+        }
+        printf("Time taken: %g seconds.\n", (double)(end-start)/CLOCKS_PER_SEC);
+        FILE *f = fopen("times.txt", "a");
+        fprintf(f, "%g,", (double)(end-start)/CLOCKS_PER_SEC);
+        free(array);
     }
     return 0;
 }
